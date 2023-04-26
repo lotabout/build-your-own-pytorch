@@ -136,44 +136,93 @@ class OpConv2d(Operator):
         self.padding = padding
 
     @staticmethod
-    def _conv2d(x: NDArray, weight: NDArray, stride=(1,1), padding=(0,0)):
-        # x is a 4d matrix (n, c, h, w)
-        # weight is a 4d matrix (n, c, h, w), where w_n is 1 or equals to x_n
+    def _pad(x: NDArray, padding):
         if padding != (0,0):
             p_h, p_w = padding
-            x_padded = np.pad(x, ((0,0), (0,0), (p_h,p_h), (p_w, p_w)))
-        else:
-            x_padded = x
+            return np.pad(x, ((0,0), (0,0), (p_h,p_h), (p_w, p_w)))
+        return x
 
+    @staticmethod
+    def _conv2d_forward_w(x: NDArray, weight: NDArray, stride=(1,1), padding=(0,0)):
+        # x is a 4d matrix (n, c, h, w)
+        # weight is a 4d matrix (o_c, c, h, w), where o_c is output channel
+        # out is (n, o_c, h, w)
+        x_padded = OpConv2d._pad(x, padding)
         i_n, i_c, i_h, i_w = x_padded.shape
         s_h, s_w = stride
-        if len(weight.shape) == 3:
-            weight = weight.reshape((1, *weight.shape))
-        w_n, w_c, w_h, w_w = weight.shape
+        wo_c, wi_c, w_h, w_w = weight.shape
 
         o_n = i_n
-        o_c = w_c
-        o_h = (i_h - w_h + 1) // s_h
-        o_w = (i_w - w_w + 1) // s_w
+        o_c = wo_c
+        o_h = (i_h - w_h) // s_h + 1
+        o_w = (i_w - w_w) // s_w + 1
 
         out = np.zeros((o_n, o_c, o_h, o_w), dtype=weight.dtype)
         for c in range(o_c):
             for h in range(o_h):
                 for w in range(o_w):
                     sel = x_padded[:, :, h*s_h:h*s_h+w_h, w*s_w:w*s_w+w_w]
+                    mul = sel * weight[c, :, :, :]
+                    out[:, c, h, w] = np.sum(mul, axis=(1, 2, 3)) # sum over c
+        return out
+
+    @staticmethod
+    def _conv2d_backward_y(x: NDArray, y: NDArray, stride=(1,1), padding=(0,0)):
+        # x is a 4d matrix (n, c, h, w)
+        # y is a 4d matrix (n, o_c, h, w)
+        # output(w)     is (o_c, c, h, w)
+        x_padded = OpConv2d._pad(x, padding)
+        i_n, i_c, i_h, i_w = x_padded.shape
+        s_h, s_w = stride
+        y_n, yo_c, y_h, y_w = y.shape
+
+        o_n = yo_c
+        o_c = i_c
+        o_h = (i_h - y_h) // s_h + 1
+        o_w = (i_w - y_w) // s_w + 1
+
+        out = np.zeros((o_n, o_c, o_h, o_w), dtype=y.dtype)
+        for c in range(o_n):
+            for h in range(o_h):
+                for w in range(o_w):
+                    sel = x_padded[:, :, h*s_h:h*s_h+y_h, w*s_w:w*s_w+y_w]
+                    mul = sel * y[:, c:c+1, :, :]
+                    out[c, :, h, w] = np.sum(mul, axis=(0, 2, 3)) # sum over c
+        return out
+
+    @staticmethod
+    def _conv2d_backward_w(y: NDArray, weight: NDArray, stride=(1,1), padding=(0,0)):
+        # y is a 4d matrix (n, c, h, w)
+        # w is a 4d matrix (c, o_c, h, w), where o_c is output channel
+        # out y is         (n, o_c, h, w)
+        y_padded = OpConv2d._pad(y, padding)
+        i_n, i_c, i_h, i_w = y_padded.shape
+        s_h, s_w = stride
+        w_n, wo_c, w_h, w_w = weight.shape
+
+        o_n = i_n
+        o_c = wo_c
+        o_h = (i_h - w_h) // s_h + 1
+        o_w = (i_w - w_w) // s_w + 1
+
+        out = np.zeros((o_n, o_c, o_h, o_w), dtype=weight.dtype)
+        for c in range(o_c):
+            for h in range(o_h):
+                for w in range(o_w):
+                    sel = y_padded[:, :, h*s_h:h*s_h+w_h, w*s_w:w*s_w+w_w]
                     mul = sel * weight[:, c, :, :]
                     out[:, c, h, w] = np.sum(mul, axis=(1, 2, 3)) # sum over c
         return out
 
+
+
     def forward(self, x: NDArray, weight: NDArray):
-        if self.padding != (0,0):
-            p_h, p_w = self.padding
-            x_padded = np.pad(x, ((0,0), (0,0), (p_h,p_h), (p_w, p_w)))
+        self.x_padded = OpConv2d._pad(x, self.padding)
+        if len(weight.shape) == 3:
+            self.weight = weight.reshape((1, *weight.shape))
         else:
-            x_padded = x
-        self.x_padded = x_padded
-        self.weight = weight
-        return OpConv2d._conv2d(x_padded, weight, self.stride)
+            self.weight = weight
+        return OpConv2d._conv2d_forward_w(self.x_padded, weight, self.stride)
 
     def backward(self, grad: NDArray):
         # grad: (n, h, c, w)
@@ -181,6 +230,8 @@ class OpConv2d(Operator):
         # w' = conv2d(x, y')
         # x' = conv2d(flip(w), y')
 
+        x_n, x_c, x_h, x_w = self.x_padded.shape
+        w_n, w_c, w_h, w_w = self.weight.shape
         y_n, y_c, y_h, y_w = grad.shape
         s_h, s_w = self.stride
 
@@ -188,19 +239,19 @@ class OpConv2d(Operator):
             y_expanded = grad
         else:
             # [[1,2], [3,4]] => [[1,0,2], [0,0,0], [3,0,4]]
-            h = y_h+(y_h-1)*(s_h-1)
-            w = y_w+(y_w-1)*(s_w-1)
+            h = x_h - w_h + 1
+            w = x_w - w_w + 1
             y_expanded = np.zeros((y_n, y_c, h, w))
             for h in range(y_h):
                 for w in range(y_w):
                     y_expanded[:, :, h*s_h, w*s_w] = grad[:,:,h, w]
 
         p_h, p_w = self.padding
-        _, w_h, w_w = self.weight.shape
+        _, _, w_h, w_w = self.weight.shape
 
-        w_prim = OpConv2d._conv2d(self.x_padded, y_expanded)
-        w_flip = np.flip(self.weight, (1,2))
-        x_padded_prim = OpConv2d._conv2d(y_expanded, w_flip, padding=(w_h//2, w_w//2))
+        w_prim = OpConv2d._conv2d_backward_y(self.x_padded, y_expanded)
+        w_flip = np.flip(self.weight, (2,3))
+        x_padded_prim = OpConv2d._conv2d_backward_w(y_expanded, w_flip, padding=(w_h-1, w_w-1))
 
         _, _, x_h, x_w = x_padded_prim.shape
 
