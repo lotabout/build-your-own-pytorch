@@ -214,8 +214,6 @@ class OpConv2d(Operator):
                     out[:, c, h, w] = np.sum(mul, axis=(1, 2, 3)) # sum over c
         return out
 
-
-
     def forward(self, x: NDArray, weight: NDArray):
         self.x_padded = OpConv2d._pad(x, self.padding)
         if len(weight.shape) == 3:
@@ -262,3 +260,22 @@ class OpConv2d(Operator):
             x_prim = x_padded_prim
 
         return x_prim, w_prim
+
+def conv2d(x, w, stride=(1,1), padding=(0,0)):
+    return OpConv2d(stride=stride, padding=padding)(x, w)
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+class OpSigmoid(object):
+    # all element wise
+    # func: y = 1/(1+e^(-x))
+    # deri: y' = y * (1-y)
+
+    def forward(self, x: NDArray):
+        self.y = 1/(1+np.exp(-x))
+        return self.y
+
+    def backward(self, grad: NDArray):
+        return grad * self.y * (1-self.y)
+
+def sigmoid(x):
+    return OpSigmoid()(x)
