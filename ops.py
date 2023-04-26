@@ -129,6 +129,13 @@ def sin(x):
     return OpSin()(x)
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def _pad(x: NDArray, padding):
+    if padding != (0,0):
+        p_h, p_w = padding
+        return np.pad(x, ((0,0), (0,0), (p_h,p_h), (p_w, p_w)))
+    return x
+
+
 class OpConv2d(Operator):
     def __init__(self, stride=(1,1), padding=(0,0)):
         super(OpConv2d, self).__init__()
@@ -136,18 +143,11 @@ class OpConv2d(Operator):
         self.padding = padding
 
     @staticmethod
-    def _pad(x: NDArray, padding):
-        if padding != (0,0):
-            p_h, p_w = padding
-            return np.pad(x, ((0,0), (0,0), (p_h,p_h), (p_w, p_w)))
-        return x
-
-    @staticmethod
     def _conv2d_forward_w(x: NDArray, weight: NDArray, stride=(1,1), padding=(0,0)):
         # x is a 4d matrix (n, c, h, w)
         # weight is a 4d matrix (o_c, c, h, w), where o_c is output channel
         # out is (n, o_c, h, w)
-        x_padded = OpConv2d._pad(x, padding)
+        x_padded = _pad(x, padding)
         i_n, i_c, i_h, i_w = x_padded.shape
         s_h, s_w = stride
         wo_c, wi_c, w_h, w_w = weight.shape
@@ -171,7 +171,7 @@ class OpConv2d(Operator):
         # x is a 4d matrix (n, c, h, w)
         # y is a 4d matrix (n, o_c, h, w)
         # output(w)     is (o_c, c, h, w)
-        x_padded = OpConv2d._pad(x, padding)
+        x_padded = _pad(x, padding)
         i_n, i_c, i_h, i_w = x_padded.shape
         s_h, s_w = stride
         y_n, yo_c, y_h, y_w = y.shape
@@ -195,7 +195,7 @@ class OpConv2d(Operator):
         # y is a 4d matrix (n, c, h, w)
         # w is a 4d matrix (c, o_c, h, w), where o_c is output channel
         # out y is         (n, o_c, h, w)
-        y_padded = OpConv2d._pad(y, padding)
+        y_padded = _pad(y, padding)
         i_n, i_c, i_h, i_w = y_padded.shape
         s_h, s_w = stride
         w_n, wo_c, w_h, w_w = weight.shape
@@ -215,7 +215,7 @@ class OpConv2d(Operator):
         return out
 
     def forward(self, x: NDArray, weight: NDArray):
-        self.x_padded = OpConv2d._pad(x, self.padding)
+        self.x_padded = _pad(x, self.padding)
         if len(weight.shape) == 3:
             self.weight = weight.reshape((1, *weight.shape))
         else:
@@ -279,3 +279,66 @@ class OpSigmoid(object):
 
 def sigmoid(x):
     return OpSigmoid()(x)
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+class OpAvgPool2d(object):
+    def __init__(self, kernel_size, stride=(1,1), padding=(0,0)):
+        super(OpAvgPool, self).__init__()
+        self.kernel_size = kernel_size # (h, w)
+        self.stride = stride # (h, w)
+        self.padding = padding # (h, w)
+
+    def forward(self, x: NDArray):
+        x_padded = _pad(x, self.padding)
+        self.x_padded_shape = x_padded.shape
+        x_n, x_c, x_h, x_w = x_padded.shape
+        s_h, s_w = self.stride
+        k_h, k_w = self.kernel_size
+
+        o_n = x_n
+        o_c = x_c
+        o_h = (x_h - k_h) // s_h + 1
+        o_w = (x_w - k_w) // s_w + 1
+
+        out = np.zeros((o_n, o_c, o_h, o_w), dtype=x.dtype)
+        for h in range(o_h):
+            for w in range(o_w):
+                sel = x_padded[:, :, h*s_h:h*s_h+k_h, w*s_w:w*s_w+k_w]
+                out[:, :, h, w] = np.average(sel, axis=(2, 3)) # average hxw
+        return out
+
+    def backward(self, grad: NDArray):
+        x_n, x_c, x_h, x_w = self.x_padded_shape
+        y_n, y_c, y_h, y_w = grad.shape
+        k_h, k_w = self.kernel_size
+        s_h, s_w = self.stride
+        p_h, p_w = self.padding
+
+        if self.stride == (1,1):
+            y_expanded = grad
+        else:
+            # [[1,2], [3,4]] => [[1,0,2], [0,0,0], [3,0,4]]
+            h = x_h - k_h + 1
+            w = x_w - k_w + 1
+            y_expanded = np.zeros((y_n, y_c, h, w))
+            for h in range(y_h):
+                for w in range(y_w):
+                    y_expanded[:, :, h*s_h, w*s_w] = grad[:,:,h, w]
+
+        y_padded = _pad(y_expanded, (k_h-1, k_w-1))
+
+        o_h = x_h - p_h
+        o_w = x_w - p_w
+        out = np.zeros((x_n, x_c, o_h, o_w), dtype=x.dtype)
+        for h in range(o_h):
+            for w in range(o_w):
+                sel = y_padded[:, :, h:h+k_h, w:w+k_w]
+                out[:, :, h, w] = np.sum(sel, axis=(2, 3))/4
+
+        # remove padding
+        if self.padding != (0,0):
+            return out[:, :, p_h:x_h-p_h, p_w:x_w-p_w]
+        return out
+
+def avgPool2d(x, stride=(1,1), padding=(0,0)):
+    return OpAvgPool2d(stride=stride, padding=padding)(x)
