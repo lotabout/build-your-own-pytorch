@@ -1,4 +1,5 @@
 from autograd import Tensor, Operator, NDArray
+import unittest
 
 import numpy as np
 
@@ -283,7 +284,7 @@ def sigmoid(x):
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 class OpAvgPool2d(object):
     def __init__(self, kernel_size, stride=(1,1), padding=(0,0)):
-        super(OpAvgPool, self).__init__()
+        super(OpAvgPool2d, self).__init__()
         self.kernel_size = kernel_size # (h, w)
         self.stride = stride # (h, w)
         self.padding = padding # (h, w)
@@ -329,7 +330,7 @@ class OpAvgPool2d(object):
 
         o_h = x_h - p_h
         o_w = x_w - p_w
-        out = np.zeros((x_n, x_c, o_h, o_w), dtype=x.dtype)
+        out = np.zeros((x_n, x_c, o_h, o_w), dtype=y_padded.dtype)
         for h in range(o_h):
             for w in range(o_w):
                 sel = y_padded[:, :, h:h+k_h, w:w+k_w]
@@ -342,3 +343,103 @@ class OpAvgPool2d(object):
 
 def avgPool2d(x, stride=(1,1), padding=(0,0)):
     return OpAvgPool2d(stride=stride, padding=padding)(x)
+
+class TestOpAvgPool2d(unittest.TestCase):
+
+    def test_OpConv2d(self):
+        import numpy as np
+        import torch
+
+        for k in range(1,6):
+            for s in range(1,4):
+                for p in range(0,k//2):
+                    for in_channels in range(1,4):
+                        for out_channel in range(1,4):
+                            for hw in range(k+3, k*2+3):
+                                with self.subTest(kernel_size=k, stride=s, padding=p, in_channels=in_channels, out_channels=out_channel, hw=hw):
+                                    conv = torch.nn.Conv2d(
+                                        in_channels=in_channels,
+                                        out_channels=out_channel,
+                                        kernel_size=k,
+                                        bias=False,
+                                        stride = s,
+                                        padding_mode='zeros',
+                                        padding=p
+                                    )
+
+                                    x = np.random.randn(4,in_channels,hw,hw)
+                                    w = np.random.randn(out_channel,in_channels,k,k)
+
+                                    x_tensor = torch.from_numpy(x)
+                                    x_tensor.requires_grad = True
+                                    conv.weight = torch.nn.Parameter(torch.from_numpy(w))
+                                    out = conv(x_tensor)
+                                    loss = out.sum()
+                                    loss.backward()
+
+                                    op = OpConv2d(padding=(p,p), stride=(s,s))
+                                    y = op.forward(x, w)
+                                    x_prim, w_prim = op.backward(np.ones(out.shape))
+
+                                    self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
+                                    self.assertTrue(np.all(conv.weight.grad.detach().numpy() - w_prim < 1e-6))
+                                    self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
+
+    def test_sigmoid(self):
+        import numpy as np
+        import torch
+
+        for n in range(1,4):
+            for c in range(1,4):
+                for hw in range(3, 6):
+                    sigmoid = torch.nn.Sigmoid()
+                    x = np.random.randn(n,c,hw,hw)
+                    x_tensor = torch.from_numpy(x)
+                    x_tensor.requires_grad = True
+                    out = sigmoid(x_tensor)
+
+                    loss = out.sum()
+                    loss.backward()
+
+                    op = OpSigmoid()
+                    y = op.forward(x)
+                    x_prim = op.backward(np.ones(out.shape))
+
+                    self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
+                    self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
+
+    def test_OpAvgPool2d(self):
+        import numpy as np
+        import torch
+
+        for k in range(1,6):
+            for s in range(1,4):
+                for p in range(0,k//2):
+                    for hw in range(k+3, k*2+3):
+                        with self.subTest(kernel_size=k, stride=s, padding=p, hw=hw):
+                            avgPool = torch.nn.AvgPool2d(
+                                kernel_size=k,
+                                stride=s,
+                                padding=p
+                            )
+
+                            x = np.random.randn(5,5,hw,hw)
+                            x_tensor = torch.from_numpy(x)
+                            x_tensor.requires_grad = True
+                            out = avgPool(x_tensor)
+
+                            loss = out.sum()
+                            loss.backward()
+
+                            op = OpAvgPool2d(kernel_size=(avgPool.kernel_size,avgPool.kernel_size),
+                                           padding=(avgPool.padding,avgPool.padding),
+                                           stride=(avgPool.stride,avgPool.stride))
+                            y = op.forward(x)
+                            x_prim = op.backward(np.ones(out.shape))
+
+                            self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
+                            self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
+
+
+if __name__ == '__main__':
+    unittest.main()
