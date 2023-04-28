@@ -454,6 +454,9 @@ class OpReLu(object):
     def backward(self, grad: NDArray):
         return np.maximum(0, grad)
 
+def relu(x):
+    return OpReLu()(x)
+
 class TestOpReLu(unittest.TestCase):
 
     def test_relu(self):
@@ -479,8 +482,50 @@ class TestOpReLu(unittest.TestCase):
                     self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
                     self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
 
-def relu(x):
-    return OpReLu()(x)
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+class OpFlatten(object):
+    def __init__(self, start_dim=1, end_dim=-1):
+        self.start_dim = start_dim
+        self.end_dim = end_dim
+
+    def forward(self, x: NDArray):
+        self.x_shape = x.shape
+        end = self.end_dim % len(self.x_shape) + 1
+        merged = np.prod(self.x_shape[self.start_dim: end])
+        out_shape = self.x_shape[0:self.start_dim] + (merged,) + self.x_shape[end:]
+
+        return x.reshape(out_shape)
+
+    def backward(self, grad: NDArray):
+        return grad.reshape(self.x_shape)
+        
+def flatten(x):
+    return OpFlatten()(x)
+
+class TestOpFltten(unittest.TestCase):
+
+    def test_relu(self):
+        import numpy as np
+        import torch
+
+        for n in range(1,4):
+            for c in range(1,4):
+                for hw in range(3, 6):
+                    flatten = torch.nn.Flatten()
+                    x = np.random.randn(n,c,hw,hw)
+                    x_tensor = torch.from_numpy(x)
+                    x_tensor.requires_grad = True
+                    out = flatten (x_tensor)
+
+                    loss = out.sum()
+                    loss.backward()
+
+                    op = OpFlatten()
+                    y = op.forward(x)
+                    x_prim = op.backward(np.ones(out.shape))
+
+                    self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
+                    self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Tests
