@@ -504,7 +504,7 @@ def flatten(x):
 
 class TestOpFltten(unittest.TestCase):
 
-    def test_relu(self):
+    def test(self):
         import numpy as np
         import torch
 
@@ -515,7 +515,7 @@ class TestOpFltten(unittest.TestCase):
                     x = np.random.randn(n,c,hw,hw)
                     x_tensor = torch.from_numpy(x)
                     x_tensor.requires_grad = True
-                    out = flatten (x_tensor)
+                    out = flatten(x_tensor)
 
                     loss = out.sum()
                     loss.backward()
@@ -526,6 +526,63 @@ class TestOpFltten(unittest.TestCase):
 
                     self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
                     self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+class OpLinear(object):
+
+    def forward(self, x: NDArray, w: NDArray, b: NDArray):
+        # x: (n, id) n samples, in_d dimensions
+        # w: (od, id) in_d dimensions, out_d dimensions
+        # b: (od) out_d dimensions
+        # y: (n, od) = x * w.T + b
+        self.x = x
+        self.w = w
+
+        return np.matmul(x, w.T) + b
+
+    def backward(self, grad):
+        # func: y = x * w.T + b
+        # deri: y'/x' = y' * w
+        # deri: y'/w' = y'.T * x
+        # deri: y'/b' = y'
+
+        return np.matmul(grad, self.w), np.matmul(grad.T, self.x), np.sum(grad, axis=0, keepdims=True)
+
+def linear(x, w, b):
+    return OpLinear()(x, w, b)
+
+
+class TestOpLinear(unittest.TestCase):
+
+    def test(self):
+        import numpy as np
+        import torch
+
+        for n in range(1,4):
+            for id in range(10,15):
+                for od in range(10, 15):
+                    linear = torch.nn.Linear(id, od)
+                    x = np.random.randn(n, id)
+                    x_tensor = torch.from_numpy(x)
+                    x_tensor.requires_grad = True
+                    w = np.random.randn(od, id)
+                    linear.weight = torch.nn.Parameter(torch.from_numpy(w))
+                    b = np.random.randn(od)
+                    linear.bias = torch.nn.Parameter(torch.from_numpy(b))
+
+                    out = linear(x_tensor)
+
+                    loss = out.sum()
+                    loss.backward()
+
+                    op = OpLinear()
+                    y = op.forward(x, w, b)
+                    x_prim, w_prim, b_prim = op.backward(np.ones(out.shape))
+
+                    self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
+                    self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
+                    self.assertTrue(np.all(linear.weight.grad.detach().numpy() - w_prim < 1e-6))
+                    self.assertTrue(np.all(linear.bias.grad.detach().numpy() - b_prim < 1e-6))
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Tests
