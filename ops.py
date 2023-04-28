@@ -265,6 +265,47 @@ class OpConv2d(Operator):
 def conv2d(x, w, stride=(1,1), padding=(0,0)):
     return OpConv2d(stride=stride, padding=padding)(x, w)
 
+class TestOpConv2d(unittest.TestCase):
+
+    def test_OpConv2d(self):
+        import numpy as np
+        import torch
+
+        for k in range(1,6):
+            for s in range(1,4):
+                for p in range(0,k//2):
+                    for in_channels in range(1,4):
+                        for out_channel in range(1,4):
+                            for hw in range(k+3, k*2+3):
+                                with self.subTest(kernel_size=k, stride=s, padding=p, in_channels=in_channels, out_channels=out_channel, hw=hw):
+                                    conv = torch.nn.Conv2d(
+                                        in_channels=in_channels,
+                                        out_channels=out_channel,
+                                        kernel_size=k,
+                                        bias=False,
+                                        stride = s,
+                                        padding_mode='zeros',
+                                        padding=p
+                                    )
+
+                                    x = np.random.randn(4,in_channels,hw,hw)
+                                    w = np.random.randn(out_channel,in_channels,k,k)
+
+                                    x_tensor = torch.from_numpy(x)
+                                    x_tensor.requires_grad = True
+                                    conv.weight = torch.nn.Parameter(torch.from_numpy(w))
+                                    out = conv(x_tensor)
+                                    loss = out.sum()
+                                    loss.backward()
+
+                                    op = OpConv2d(padding=(p,p), stride=(s,s))
+                                    y = op.forward(x, w)
+                                    x_prim, w_prim = op.backward(np.ones(out.shape))
+
+                                    self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
+                                    self.assertTrue(np.all(conv.weight.grad.detach().numpy() - w_prim < 1e-6))
+                                    self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
+
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 class OpSigmoid(object):
     # all element wise
@@ -280,6 +321,32 @@ class OpSigmoid(object):
 
 def sigmoid(x):
     return OpSigmoid()(x)
+
+class TestOpSigmoid(unittest.TestCase):
+
+    def test_sigmoid(self):
+        import numpy as np
+        import torch
+
+        for n in range(1,4):
+            for c in range(1,4):
+                for hw in range(3, 6):
+                    sigmoid = torch.nn.Sigmoid()
+                    x = np.random.randn(n,c,hw,hw)
+                    x_tensor = torch.from_numpy(x)
+                    x_tensor.requires_grad = True
+                    out = sigmoid(x_tensor)
+
+                    loss = out.sum()
+                    loss.backward()
+
+                    op = OpSigmoid()
+                    y = op.forward(x)
+                    x_prim = op.backward(np.ones(out.shape))
+
+                    self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
+                    self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
+
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 class OpAvgPool2d(object):
@@ -346,68 +413,6 @@ def avgPool2d(x, stride=(1,1), padding=(0,0)):
 
 class TestOpAvgPool2d(unittest.TestCase):
 
-    def test_OpConv2d(self):
-        import numpy as np
-        import torch
-
-        for k in range(1,6):
-            for s in range(1,4):
-                for p in range(0,k//2):
-                    for in_channels in range(1,4):
-                        for out_channel in range(1,4):
-                            for hw in range(k+3, k*2+3):
-                                with self.subTest(kernel_size=k, stride=s, padding=p, in_channels=in_channels, out_channels=out_channel, hw=hw):
-                                    conv = torch.nn.Conv2d(
-                                        in_channels=in_channels,
-                                        out_channels=out_channel,
-                                        kernel_size=k,
-                                        bias=False,
-                                        stride = s,
-                                        padding_mode='zeros',
-                                        padding=p
-                                    )
-
-                                    x = np.random.randn(4,in_channels,hw,hw)
-                                    w = np.random.randn(out_channel,in_channels,k,k)
-
-                                    x_tensor = torch.from_numpy(x)
-                                    x_tensor.requires_grad = True
-                                    conv.weight = torch.nn.Parameter(torch.from_numpy(w))
-                                    out = conv(x_tensor)
-                                    loss = out.sum()
-                                    loss.backward()
-
-                                    op = OpConv2d(padding=(p,p), stride=(s,s))
-                                    y = op.forward(x, w)
-                                    x_prim, w_prim = op.backward(np.ones(out.shape))
-
-                                    self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
-                                    self.assertTrue(np.all(conv.weight.grad.detach().numpy() - w_prim < 1e-6))
-                                    self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
-
-    def test_sigmoid(self):
-        import numpy as np
-        import torch
-
-        for n in range(1,4):
-            for c in range(1,4):
-                for hw in range(3, 6):
-                    sigmoid = torch.nn.Sigmoid()
-                    x = np.random.randn(n,c,hw,hw)
-                    x_tensor = torch.from_numpy(x)
-                    x_tensor.requires_grad = True
-                    out = sigmoid(x_tensor)
-
-                    loss = out.sum()
-                    loss.backward()
-
-                    op = OpSigmoid()
-                    y = op.forward(x)
-                    x_prim = op.backward(np.ones(out.shape))
-
-                    self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
-                    self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
-
     def test_OpAvgPool2d(self):
         import numpy as np
         import torch
@@ -440,6 +445,46 @@ class TestOpAvgPool2d(unittest.TestCase):
                             self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
                             self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
 
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+class OpReLu(object):
+
+    def forward(self, x: NDArray):
+        return np.maximum(0, x)
+
+    def backward(self, grad: NDArray):
+        return np.maximum(0, grad)
+
+class TestOpReLu(unittest.TestCase):
+
+    def test_relu(self):
+        import numpy as np
+        import torch
+
+        for n in range(1,4):
+            for c in range(1,4):
+                for hw in range(3, 6):
+                    relu = torch.nn.ReLU()
+                    x = np.random.randn(n,c,hw,hw)
+                    x_tensor = torch.from_numpy(x)
+                    x_tensor.requires_grad = True
+                    out = relu(x_tensor)
+
+                    loss = out.sum()
+                    loss.backward()
+
+                    op = OpReLu()
+                    y = op.forward(x)
+                    x_prim = op.backward(np.ones(out.shape))
+
+                    self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
+                    self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
+
+def relu(x):
+    return OpReLu()(x)
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Tests
+# invoke by python3 -m unittest ops
 
 if __name__ == '__main__':
     unittest.main()
