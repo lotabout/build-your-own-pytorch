@@ -140,8 +140,8 @@ def _pad(x: NDArray, padding):
 class OpConv2d(Operator):
     def __init__(self, stride=(1,1), padding=(0,0)):
         super(OpConv2d, self).__init__()
-        self.stride = stride # (h, w)
-        self.padding = padding
+        self.stride = (stride, stride) if isinstance(stride, int) else stride # (h, w)
+        self.padding = (padding, padding) if isinstance(padding, int) else padding # (h, w)
 
     @staticmethod
     def _conv2d_forward_w(x: NDArray, weight: NDArray, stride=(1,1), padding=(0,0)):
@@ -307,7 +307,7 @@ class TestOpConv2d(unittest.TestCase):
                                     self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-class OpSigmoid(object):
+class OpSigmoid(Operator):
     # all element wise
     # func: y = 1/(1+e^(-x))
     # deri: y' = y * (1-y)
@@ -349,12 +349,12 @@ class TestOpSigmoid(unittest.TestCase):
 
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-class OpAvgPool2d(object):
+class OpAvgPool2d(Operator):
     def __init__(self, kernel_size, stride=(1,1), padding=(0,0)):
         super(OpAvgPool2d, self).__init__()
-        self.kernel_size = kernel_size # (h, w)
-        self.stride = stride # (h, w)
-        self.padding = padding # (h, w)
+        self.kernel_size = (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size # (h, w)
+        self.stride = (stride, stride) if isinstance(stride, int) else stride # (h, w)
+        self.padding = (padding, padding) if isinstance(padding, int) else padding # (h, w)
 
     def forward(self, x: NDArray):
         x_padded = _pad(x, self.padding)
@@ -408,8 +408,8 @@ class OpAvgPool2d(object):
             return out[:, :, p_h:x_h-p_h, p_w:x_w-p_w]
         return out
 
-def avgPool2d(x, stride=(1,1), padding=(0,0)):
-    return OpAvgPool2d(stride=stride, padding=padding)(x)
+def avgPool2d(x, kernel_size, stride=(1,1), padding=(0,0)):
+    return OpAvgPool2d(kernel_size, stride=stride, padding=padding)(x)
 
 class TestOpAvgPool2d(unittest.TestCase):
 
@@ -446,7 +446,7 @@ class TestOpAvgPool2d(unittest.TestCase):
                             self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-class OpReLu(object):
+class OpReLu(Operator):
 
     def forward(self, x: NDArray):
         return np.maximum(0, x)
@@ -483,8 +483,9 @@ class TestOpReLu(unittest.TestCase):
                     self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-class OpFlatten(object):
+class OpFlatten(Operator):
     def __init__(self, start_dim=1, end_dim=-1):
+        super(OpFlatten, self).__init__()
         self.start_dim = start_dim
         self.end_dim = end_dim
 
@@ -528,7 +529,7 @@ class TestOpFltten(unittest.TestCase):
                     self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-class OpLinear(object):
+class OpLinear(Operator):
 
     def forward(self, x: NDArray, w: NDArray, b: NDArray):
         # x: (n, id) n samples, in_d dimensions
@@ -537,8 +538,12 @@ class OpLinear(object):
         # y: (n, od) = x * w.T + b
         self.x = x
         self.w = w
+        self.b = b
 
-        return np.matmul(x, w.T) + b
+        if b is None:
+            return np.matmul(x, w.T)
+        else:
+            return np.matmul(x, w.T) + b
 
     def backward(self, grad):
         # func: y = x * w.T + b
@@ -546,11 +551,13 @@ class OpLinear(object):
         # deri: y'/w' = y'.T * x
         # deri: y'/b' = y'
 
-        return np.matmul(grad, self.w), np.matmul(grad.T, self.x), np.sum(grad, axis=0, keepdims=True)
+        if b is None:
+            return np.matmul(grad, self.w), np.matmul(grad.T, self.x)
+        else:
+            return np.matmul(grad, self.w), np.matmul(grad.T, self.x), np.sum(grad, axis=0, keepdims=True)
 
-def linear(x, w, b):
+def linear(x, w, b=None):
     return OpLinear()(x, w, b)
-
 
 class TestOpLinear(unittest.TestCase):
 
