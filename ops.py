@@ -12,6 +12,21 @@ def is_scalar(x):
     # but works in our examples
     return not isinstance(x, Tensor)
 
+def _pad(x: NDArray, padding):
+    if padding != (0,0):
+        p_h, p_w = padding
+        return np.pad(x, ((0,0), (0,0), (p_h,p_h), (p_w, p_w)))
+    return x
+
+def _adjust_shape_with_sum(x: NDArray, out_shape: NDArray):
+    if x.shape == out_shape:
+        return x
+    elif x.shape < out_shape:
+        return np.broadcast_to(x, out_shape)
+    else:
+        compress_axis = [i for i, (x, y) in enumerate(zip(x.shape, out_shape)) if x != y]
+        return np.sum(x, axis=tuple(compress_axis), keepdims=True)
+
 #======================================================================
 # Operator definition
 
@@ -21,14 +36,68 @@ class OpExp(Operator):
     # deri: y'/x' = e^x
 
     def forward(self, x: NDArray):
+        self.x = x
         return np.exp(x)
 
-    @staticmethod
     def backward(self, y: NDArray):
-        return np.exp(x)
+        return np.exp(self.x) * y
 
 def exp(x):
     return OpExp()(x)
+
+class TestOpExp(unittest.TestCase):
+
+    def test(self):
+        import numpy as np
+        import torch
+
+        x = np.exp(np.random.randn(3, 5))
+        x_tensor = torch.from_numpy(x)
+        x_tensor.requires_grad = True
+        out = torch.exp(x_tensor)
+        out.backward(2*torch.ones_like(out))
+
+        op = OpExp()
+        y = op.forward(x)
+        x_prim = op.backward(2*np.ones_like(y))
+
+        self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
+        self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
+
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+class OpLog(Operator):
+    # func: y  = log(x)
+    # deri: y'/x' = 1/x
+
+    def forward(self, x: NDArray):
+        self.x = x
+        return np.log(x)
+
+    def backward(self, y: NDArray):
+        return y/self.x
+
+def log(x):
+    return OpLog()(x)
+
+class TestOpLog(unittest.TestCase):
+
+    def test(self):
+        import numpy as np
+        import torch
+
+        x = np.exp(np.random.randn(3, 5))
+        x_tensor = torch.from_numpy(x)
+        x_tensor.requires_grad = True
+        out = torch.log(x_tensor)
+        out.backward(2*torch.ones_like(out))
+
+        op = OpLog()
+        y = op.forward(x)
+        x_prim = op.backward(2*np.ones_like(y))
+
+        self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
+        self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 class OpEWiseMul(Operator):
@@ -41,7 +110,32 @@ class OpEWiseMul(Operator):
         return a * b
 
     def backward(self, grad: NDArray):
-        return self.b * grad, self.a * grad
+        return _adjust_shape_with_sum(self.b * grad, self.a.shape), \
+               _adjust_shape_with_sum(self.a * grad, self.b.shape)
+
+class TesetOpEWiseMul(unittest.TestCase):
+
+    def test(self):
+        import numpy as np
+        import torch
+
+        shapes = [(1,1), (1,3), (3, 1), (3, 3)]
+        for x_shape in shapes:
+            for y_shape in shapes:
+                x = np.random.randn(*x_shape)
+                y = np.random.randn(*y_shape)
+                x_tensor = torch.from_numpy(x)
+                x_tensor.requires_grad = True
+                y_tensor = torch.from_numpy(y)
+                y_tensor.requires_grad = True
+                t = x_tensor * y_tensor
+                t.backward(2*torch.ones_like(t))
+                op = OpEWiseMul()
+                m = op.forward(x, y)
+                x_prim, y_prim = op.backward(2*np.ones_like(m))
+                self.assertTrue(np.all(t.detach().numpy() - m < 1e-6))
+                self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
+                self.assertTrue(np.all(y_tensor.grad.detach().numpy() - y_prim < 1e-6))
 
 class OpMulScalar(Operator):
     # func: y = a * scalar
@@ -55,6 +149,24 @@ class OpMulScalar(Operator):
 
     def backward(self, grad: NDArray):
         return self.scalar * grad
+
+class TesetOpMulScalar(unittest.TestCase):
+
+    def test(self):
+        import numpy as np
+        import torch
+
+        x = np.random.randn(3, 5)
+        x_tensor = torch.from_numpy(x)
+        x_tensor.requires_grad = True
+        t = x_tensor * 3
+        t.backward(2*torch.ones_like(t))
+        op = OpMulScalar(3)
+        m = op.forward(x)
+        x_prim = op.backward(2*np.ones_like(m))
+
+        self.assertTrue(np.all(t.detach().numpy() - m < 1e-6))
+        self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
 
 def mul(a, b):
     if is_tensor(a) and is_tensor(b):
@@ -72,11 +184,37 @@ class OpEWiseAdd(Operator):
     # deri: y'/a' = 1
     # deri: y'/b' = 1
     def forward(self, a: NDArray, b: NDArray):
+        self.a = a
+        self.b = b
         return a + b
 
     def backward(self, grad: NDArray):
-        ret = grad, grad
-        return ret
+        return _adjust_shape_with_sum(grad, self.a.shape), \
+               _adjust_shape_with_sum(grad, self.b.shape)
+
+class TesetOpEWiseAdd(unittest.TestCase):
+
+    def test(self):
+        import numpy as np
+        import torch
+
+        shapes = [(1,1), (1,3), (3, 1), (3, 3)]
+        for x_shape in shapes:
+            for y_shape in shapes:
+                x = np.random.randn(*x_shape)
+                y = np.random.randn(*y_shape)
+                x_tensor = torch.from_numpy(x)
+                x_tensor.requires_grad = True
+                y_tensor = torch.from_numpy(y)
+                y_tensor.requires_grad = True
+                t = x_tensor + y_tensor
+                t.backward(2*torch.ones_like(t))
+                op = OpEWiseAdd()
+                m = op.forward(x, y)
+                x_prim, y_prim = op.backward(2*np.ones_like(m))
+                self.assertTrue(np.all(t.detach().numpy() - m < 1e-6))
+                self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
+                self.assertTrue(np.all(y_tensor.grad.detach().numpy() - y_prim < 1e-6))
 
 class OpAddScalar(Operator):
     # func: y = a + c
@@ -101,6 +239,90 @@ def add(a, b):
         return OpAddScalar(a)(b)
     else:
         raise NotImplementedError(f'add not implemented for two scalar')
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+class OpEWiseDiv(Operator):
+    # func: y = a / b
+    # deri: a' = 1/b
+    # deri: b' = a * (-1/b^2)
+    def forward(self, a: NDArray, b: NDArray):
+        self.a = a
+        self.b = b
+        return a / b
+
+    def backward(self, grad: NDArray):
+        a_prim = 1/self.b * grad
+        b_prim = self.a * (-1/(self.b ** 2)) * grad
+        return _adjust_shape_with_sum(a_prim, self.a.shape), \
+               _adjust_shape_with_sum(b_prim, self.b.shape)
+
+def div(a, b):
+    return OpEWiseDiv()(a, b)
+
+class TestOpEWiseDiv(unittest.TestCase):
+
+    def test(self):
+        import numpy as np
+        import torch
+
+        shapes = [(1,1), (1,3), (3, 1), (3, 3)]
+        for x_shape in shapes:
+            for y_shape in shapes:
+
+                x = np.random.randn(*x_shape)
+                y = np.random.randn(*y_shape)
+                x_tensor = torch.from_numpy(x)
+                x_tensor.requires_grad = True
+                y_tensor = torch.from_numpy(y)
+                y_tensor.requires_grad = True
+                t = x_tensor / y_tensor
+                t.backward(2*torch.ones_like(t))
+                op = OpEWiseDiv()
+                m = op.forward(x, y)
+                x_prim, y_prim = op.backward(2*np.ones_like(m))
+
+                self.assertTrue(np.all(t.detach().numpy() - m < 1e-6))
+                self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
+                self.assertTrue(np.all(y_tensor.grad.detach().numpy() - y_prim < 1e-6))
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+class OpSum(Operator):
+    # func: y  = sum(x)
+    # deri: y'/x' = broadcast
+
+    def __init__(self, axis=None, keepdims=False):
+        super(OpSum, self).__init__()
+        self.axis = axis
+        self.keepdims = keepdims
+
+    def forward(self, x: NDArray):
+        self.x_shape = x.shape
+        return np.sum(x, axis=self.axis, keepdims=self.keepdims)
+
+    def backward(self, y: NDArray):
+        return _adjust_shape_with_sum(y, self.x_shape)
+
+def sum(x, axis=None, keepdims=False):
+    return OpSum(axis=axis, keepdims=keepdims)(x)
+
+class TestOpSum(unittest.TestCase):
+    def test(self):
+        import numpy as np
+        import torch
+        for axis in range(0,2):
+            for keepdims in [True, False]:
+                x = np.random.randn(5,5)
+                x_tensor = torch.from_numpy(x)
+                x_tensor.requires_grad = True
+                out = torch.sum(x_tensor, axis=axis, keepdims=keepdims)
+                loss = out.sum()
+                loss.backward(2*torch.ones_like(loss))
+
+                op = OpSum(axis=axis, keepdims=keepdims)
+                y = op.forward(x)
+                x_prim = op.backward(2*np.ones(out.shape))
+                self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
+                self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 class Square(Operator):
@@ -130,13 +352,6 @@ def sin(x):
     return OpSin()(x)
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-def _pad(x: NDArray, padding):
-    if padding != (0,0):
-        p_h, p_w = padding
-        return np.pad(x, ((0,0), (0,0), (p_h,p_h), (p_w, p_w)))
-    return x
-
-
 class OpConv2d(Operator):
     def __init__(self, stride=(1,1), padding=(0,0)):
         super(OpConv2d, self).__init__()
@@ -296,11 +511,11 @@ class TestOpConv2d(unittest.TestCase):
                                     conv.weight = torch.nn.Parameter(torch.from_numpy(w))
                                     out = conv(x_tensor)
                                     loss = out.sum()
-                                    loss.backward()
+                                    loss.backward(2*torch.ones_like(loss))
 
                                     op = OpConv2d(padding=(p,p), stride=(s,s))
                                     y = op.forward(x, w)
-                                    x_prim, w_prim = op.backward(np.ones(out.shape))
+                                    x_prim, w_prim = op.backward(2*np.ones(out.shape))
 
                                     self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
                                     self.assertTrue(np.all(conv.weight.grad.detach().numpy() - w_prim < 1e-6))
@@ -338,11 +553,11 @@ class TestOpSigmoid(unittest.TestCase):
                     out = sigmoid(x_tensor)
 
                     loss = out.sum()
-                    loss.backward()
+                    loss.backward(2*torch.ones_like(loss))
 
                     op = OpSigmoid()
                     y = op.forward(x)
-                    x_prim = op.backward(np.ones(out.shape))
+                    x_prim = op.backward(2*np.ones(out.shape))
 
                     self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
                     self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
@@ -434,13 +649,13 @@ class TestOpAvgPool2d(unittest.TestCase):
                             out = avgPool(x_tensor)
 
                             loss = out.sum()
-                            loss.backward()
+                            loss.backward(2*torch.ones_like(loss))
 
                             op = OpAvgPool2d(kernel_size=(avgPool.kernel_size,avgPool.kernel_size),
                                            padding=(avgPool.padding,avgPool.padding),
                                            stride=(avgPool.stride,avgPool.stride))
                             y = op.forward(x)
-                            x_prim = op.backward(np.ones(out.shape))
+                            x_prim = op.backward(2*np.ones(out.shape))
 
                             self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
                             self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
@@ -473,11 +688,11 @@ class TestOpReLu(unittest.TestCase):
                     out = relu(x_tensor)
 
                     loss = out.sum()
-                    loss.backward()
+                    loss.backward(2*torch.ones_like(loss))
 
                     op = OpReLu()
                     y = op.forward(x)
-                    x_prim = op.backward(np.ones(out.shape))
+                    x_prim = op.backward(2*np.ones(out.shape))
 
                     self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
                     self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
@@ -519,11 +734,11 @@ class TestOpFltten(unittest.TestCase):
                     out = flatten(x_tensor)
 
                     loss = out.sum()
-                    loss.backward()
+                    loss.backward(2*torch.ones_like(loss))
 
                     op = OpFlatten()
                     y = op.forward(x)
-                    x_prim = op.backward(np.ones(out.shape))
+                    x_prim = op.backward(2*np.ones(out.shape))
 
                     self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
                     self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
@@ -540,7 +755,7 @@ class OpLinear(Operator):
         self.w = w
         self.b = b
 
-        if b is None:
+        if self.b is None:
             return np.matmul(x, w.T)
         else:
             return np.matmul(x, w.T) + b
@@ -551,7 +766,7 @@ class OpLinear(Operator):
         # deri: y'/w' = y'.T * x
         # deri: y'/b' = y'
 
-        if b is None:
+        if self.b is None:
             return np.matmul(grad, self.w), np.matmul(grad.T, self.x)
         else:
             return np.matmul(grad, self.w), np.matmul(grad.T, self.x), np.sum(grad, axis=0, keepdims=True)
@@ -580,16 +795,75 @@ class TestOpLinear(unittest.TestCase):
                     out = linear(x_tensor)
 
                     loss = out.sum()
-                    loss.backward()
+                    loss.backward(2*torch.ones_like(loss))
 
                     op = OpLinear()
                     y = op.forward(x, w, b)
-                    x_prim, w_prim, b_prim = op.backward(np.ones(out.shape))
+                    x_prim, w_prim, b_prim = op.backward(2*np.ones(out.shape))
 
                     self.assertTrue(np.all(out.detach().numpy() - y < 1e-6))
                     self.assertTrue(np.all(x_tensor.grad.detach().numpy() - x_prim < 1e-6))
                     self.assertTrue(np.all(linear.weight.grad.detach().numpy() - w_prim < 1e-6))
                     self.assertTrue(np.all(linear.bias.grad.detach().numpy() - b_prim < 1e-6))
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+class OpCrossEntropy(Operator):
+    def __init__(self, reduction='mean'):
+        super(OpCrossEntropy, self).__init__()
+        self.reduction = reduction
+        if self.reduction not in ['mean', 'sum']:
+            raise Exception('reduction could only be [mean | sum]')
+
+    def forward(self, x: NDArray, y: NDArray):
+        # x: (mini-batches, classes)
+        # y: (mini-batches, classes)
+        # ref: https://pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html
+
+        self.x_tensor = Tensor(x, requires_grad=True)
+        self.y_tensor = Tensor(y, requires_grad=True)
+
+        x_exp = exp(self.x_tensor)
+        x_sum = sum(x_exp, axis=1, keepdims=True)
+        x_softmax = div(x_exp, x_sum)
+        x_log = log(x_softmax)
+        self.sum = mul(-1, sum(mul(x_log, self.y_tensor)))
+
+        if self.reduction == 'mean':
+            return self.sum.ndarray / x.shape[0]
+        elif self.reduction == 'sum':
+            return self.sum.ndarray
+        else:
+            raise Exception('reduction could only be [mean | sum]')
+
+    def backward(self, grad: NDArray):
+        # grad: (1,)
+        if self.reduction == 'mean':
+            grad = grad / self.x_tensor.shape[0]
+
+        self.sum.backward(grad)
+        return self.x_tensor.grad.ndarray, self.y_tensor.grad.ndarray
+
+class TestOpCrossEntropy(unittest.TestCase):
+
+    def test(self):
+        import numpy as np
+        import torch
+
+        shapes = [(1,1), (1,3), (3, 1), (3, 3)]
+        for shape in shapes:
+            for reduction in ['sum', 'mean']:
+
+                loss = torch.nn.CrossEntropyLoss(reduction=reduction)
+                x = np.random.randn(*shape)
+                y = np.random.randn(*shape)
+                x_tensor = torch.from_numpy(x)
+                x_tensor.requires_grad = True
+                y_tensor = torch.from_numpy(y)
+                y_tensor.requires_grad = True
+                out = loss(x_tensor, y_tensor)
+                out.backward()
+                op = OpCrossEntropy(reduction=reduction)
+                t = op.forward(x, y)
+                x_prim, y_prim = op.backward(np.ones(out.shape))
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Tests

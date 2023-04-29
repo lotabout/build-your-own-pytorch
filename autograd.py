@@ -14,6 +14,7 @@ class Tensor(object):
     def __init__(self, ndarray: NDArray, requires_grad=False, grad_fn=None):
         super(Tensor, self).__init__()
         self.ndarray = ndarray
+        self.shape = self.ndarray.shape
         self.requires_grad = requires_grad
         self.grad_fn = grad_fn
         self.grad = None
@@ -24,7 +25,7 @@ class Tensor(object):
 
     def backward(self, output_grad):
         if self.grad_fn is None:
-            raise "backward could not be called if grad_fn is None"
+            raise Exception("backward could not be called if grad_fn is None")
         execute_graph(self.grad_fn, output_grad)
 
     def __str__(self):
