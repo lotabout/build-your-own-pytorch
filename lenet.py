@@ -38,7 +38,8 @@ def gradient_descent(x, grad):
 mini_batch = 128
 epochs = 3
 
-# Note that 
+# Note that it's slow, every mini_batch takes about 1 sec
+# currenty OpConv2d is the bottle netck
 
 for epoch in range(epochs):
     print(f'epoch: {epoch}, {datetime.now()}')
