@@ -2,6 +2,39 @@ from autograd import Tensor, Operator, NDArray
 import unittest
 
 import numpy as np
+import time
+from collections import defaultdict
+
+
+#======================================================================
+# Very simple profiling tool
+
+from functools import wraps
+
+times = defaultdict(lambda: 0)
+counts = defaultdict(lambda: 0)
+
+def timeit(name):
+    def wrapper(func):
+        @wraps(func)
+        def inner(*args, **kwargs):
+            start = time.time()
+            ret = func(*args, **kwargs)
+            end = time.time()
+            times[name] += end - start
+            counts[name] += 1
+            return ret
+        return inner
+    return wrapper
+
+def print_op_times():
+    for k in times:
+        print(f'{k:25}: avg: {times[k]/counts[k]:.10f}, counts: {counts[k]}')
+
+def clean_op_tims():
+    for k in times:
+        times[k] = 0
+        counts[k] = 0
 
 #======================================================================
 def is_tensor(x):
@@ -35,10 +68,12 @@ class OpExp(Operator):
     # func: y  = e^x
     # deri: y'/x' = e^x
 
+    @timeit('OpExp-forward')
     def forward(self, x: NDArray):
         self.x = x
         return np.exp(x)
 
+    @timeit('OpExp-backward')
     def backward(self, y: NDArray):
         return np.exp(self.x) * y
 
@@ -70,10 +105,12 @@ class OpLog(Operator):
     # func: y  = log(x)
     # deri: y'/x' = 1/x
 
+    @timeit('OpLog-forward')
     def forward(self, x: NDArray):
         self.x = x
         return np.log(x)
 
+    @timeit('OpLog-backward')
     def backward(self, y: NDArray):
         return y/self.x
 
@@ -104,11 +141,13 @@ class OpEWiseMul(Operator):
     # func: y = a * b
     # deri: y'/a' = b
     # deri: y'/b' = a
+    @timeit('OpEWiseMul-forward')
     def forward(self, a: NDArray, b: NDArray):
         self.a = a
         self.b = b
         return a * b
 
+    @timeit('OpEWiseMul-backward')
     def backward(self, grad: NDArray):
         return _adjust_shape_with_sum(self.b * grad, self.a.shape), \
                _adjust_shape_with_sum(self.a * grad, self.b.shape)
@@ -144,9 +183,11 @@ class OpMulScalar(Operator):
         super(OpMulScalar, self).__init__()
         self.scalar = scalar
 
+    @timeit('OpMulScalar-forward')
     def forward(self, a: NDArray):
         return a * self.scalar
 
+    @timeit('OpMulScalar-backward')
     def backward(self, grad: NDArray):
         return self.scalar * grad
 
@@ -183,11 +224,13 @@ class OpEWiseAdd(Operator):
     # func: y = a + b
     # deri: y'/a' = 1
     # deri: y'/b' = 1
+    @timeit('OpEWiseAdd-forward')
     def forward(self, a: NDArray, b: NDArray):
         self.a = a
         self.b = b
         return a + b
 
+    @timeit('OpEWiseAdd-backward')
     def backward(self, grad: NDArray):
         return _adjust_shape_with_sum(grad, self.a.shape), \
                _adjust_shape_with_sum(grad, self.b.shape)
@@ -224,9 +267,11 @@ class OpAddScalar(Operator):
         super(OpAddScalar, self).__init__()
         self.scalar = scalar
 
+    @timeit('OpAddScalar-forward')
     def forward(self, a: NDArray):
         return self.scalar + a
 
+    @timeit('OpAddScalar-backward')
     def backward(self, grad: NDArray):
         return grad
 
@@ -245,11 +290,13 @@ class OpEWiseDiv(Operator):
     # func: y = a / b
     # deri: a' = 1/b
     # deri: b' = a * (-1/b^2)
+    @timeit('OpEWiseDiv-forward')
     def forward(self, a: NDArray, b: NDArray):
         self.a = a
         self.b = b
         return a / b
 
+    @timeit('OpEWiseDiv-backward')
     def backward(self, grad: NDArray):
         a_prim = 1/self.b * grad
         b_prim = self.a * (-1/(self.b ** 2)) * grad
@@ -295,10 +342,12 @@ class OpSum(Operator):
         self.axis = axis
         self.keepdims = keepdims
 
+    @timeit('OpSum-forward')
     def forward(self, x: NDArray):
         self.x_shape = x.shape
         return np.sum(x, axis=self.axis, keepdims=self.keepdims)
 
+    @timeit('OpSum-backward')
     def backward(self, y: NDArray):
         return _adjust_shape_with_sum(y, self.x_shape)
 
@@ -341,9 +390,11 @@ class Square(Operator):
 class OpSin(Operator):
     # func: y = sin(x)
     # deri: y'/x' = cos(x)
+    @timeit('OpSin-forward')
     def forward(self, x: NDArray):
         self.x = x
         return np.sin(x)
+    @timeit('OpSin-backward')
     def backward(self, grad: NDArray):
         ret = np.cos(self.x) * grad
         return ret
@@ -430,6 +481,7 @@ class OpConv2d(Operator):
                     out[:, c, h, w] = np.sum(mul, axis=(1, 2, 3)) # sum over c
         return out
 
+    @timeit('OpConv2d-forward')
     def forward(self, x: NDArray, weight: NDArray):
         self.x_padded = _pad(x, self.padding)
         if len(weight.shape) == 3:
@@ -438,6 +490,7 @@ class OpConv2d(Operator):
             self.weight = weight
         return OpConv2d._conv2d_forward_w(self.x_padded, weight, self.stride)
 
+    @timeit('OpConv2d-backward')
     def backward(self, grad: NDArray):
         # grad: (n, h, c, w)
         # y = conv2d(x, w)
@@ -527,10 +580,12 @@ class OpSigmoid(Operator):
     # func: y = 1/(1+e^(-x))
     # deri: y' = y * (1-y)
 
+    @timeit('OpSigmoid-forward')
     def forward(self, x: NDArray):
         self.y = 1/(1+np.exp(-x))
         return self.y
 
+    @timeit('OpSigmoid-backward')
     def backward(self, grad: NDArray):
         return grad * self.y * (1-self.y)
 
@@ -571,6 +626,7 @@ class OpAvgPool2d(Operator):
         self.stride = (stride, stride) if isinstance(stride, int) else stride # (h, w)
         self.padding = (padding, padding) if isinstance(padding, int) else padding # (h, w)
 
+    @timeit('OpAvgPool2d-forward')
     def forward(self, x: NDArray):
         x_padded = _pad(x, self.padding)
         self.x_padded_shape = x_padded.shape
@@ -590,6 +646,7 @@ class OpAvgPool2d(Operator):
                 out[:, :, h, w] = np.average(sel, axis=(2, 3)) # average hxw
         return out
 
+    @timeit('OpAvgPool2d-backward')
     def backward(self, grad: NDArray):
         x_n, x_c, x_h, x_w = self.x_padded_shape
         y_n, y_c, y_h, y_w = grad.shape
@@ -663,9 +720,11 @@ class TestOpAvgPool2d(unittest.TestCase):
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 class OpReLu(Operator):
 
+    @timeit('OpReLu-forward')
     def forward(self, x: NDArray):
         return np.maximum(0, x)
 
+    @timeit('OpReLu-backward')
     def backward(self, grad: NDArray):
         return np.maximum(0, grad)
 
@@ -704,6 +763,7 @@ class OpFlatten(Operator):
         self.start_dim = start_dim
         self.end_dim = end_dim
 
+    @timeit('OpFlatten-forward')
     def forward(self, x: NDArray):
         self.x_shape = x.shape
         end = self.end_dim % len(self.x_shape) + 1
@@ -712,6 +772,7 @@ class OpFlatten(Operator):
 
         return x.reshape(out_shape)
 
+    @timeit('OpFlatten-backward')
     def backward(self, grad: NDArray):
         return grad.reshape(self.x_shape)
         
@@ -746,6 +807,7 @@ class TestOpFltten(unittest.TestCase):
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 class OpLinear(Operator):
 
+    @timeit('OpLinear-forward')
     def forward(self, x: NDArray, w: NDArray, b: NDArray):
         # x: (n, id) n samples, in_d dimensions
         # w: (od, id) in_d dimensions, out_d dimensions
@@ -760,6 +822,7 @@ class OpLinear(Operator):
         else:
             return np.matmul(x, w.T) + b
 
+    @timeit('OpLinear-backward')
     def backward(self, grad):
         # func: y = x * w.T + b
         # deri: y'/x' = y' * w
@@ -813,6 +876,7 @@ class OpCrossEntropy(Operator):
         if self.reduction not in ['mean', 'sum']:
             raise Exception('reduction could only be [mean | sum]')
 
+    @timeit('OpCrossEntropy-forward')
     def forward(self, x: NDArray, y: NDArray):
         # x: (mini-batches, classes)
         # y: (mini-batches, classes)
@@ -834,6 +898,7 @@ class OpCrossEntropy(Operator):
         else:
             raise Exception('reduction could only be [mean | sum]')
 
+    @timeit('OpCrossEntropy-backward')
     def backward(self, grad: NDArray):
         # grad: (1,)
         if self.reduction == 'mean':
