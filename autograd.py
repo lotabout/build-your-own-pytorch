@@ -23,9 +23,11 @@ class Tensor(object):
     def is_leaf(self) -> bool:
         return self.requires_grad and self.grad_fn is None
 
-    def backward(self, output_grad):
+    def backward(self, output_grad=None):
         if self.grad_fn is None:
             raise Exception("backward could not be called if grad_fn is None")
+        if output_grad == None:
+            output_grad = np.ones(self.shape)
         execute_graph(self.grad_fn, output_grad)
 
     def __str__(self):
@@ -86,7 +88,7 @@ def compute_dependencies(root):
     q.append(root)
     while len(q) != 0:
         cur = q.pop()
-        if len(cur.next_ops) == 0:
+        if cur is None or len(cur.next_ops) == 0:
             continue
         for next in cur.next_ops:
             deps[next] = deps.get(next, 0) + 1

@@ -842,6 +842,9 @@ class OpCrossEntropy(Operator):
         self.sum.backward(grad)
         return self.x_tensor.grad.ndarray, self.y_tensor.grad.ndarray
 
+def cross_entropy(x, y, reduction='mean'):
+    return OpCrossEntropy(reduction=reduction)(x, y)
+
 class TestOpCrossEntropy(unittest.TestCase):
 
     def test(self):
