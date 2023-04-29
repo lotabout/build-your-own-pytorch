@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
 
-# High Level
-# Tensor 需要知道自己的 Op 是哪来的吗？感觉不需要？
-
 from typing import List, Optional, NamedTuple, Tuple, Union, Dict
 import numpy as np
 import collections
@@ -37,7 +34,6 @@ class Tensor(object):
     def __repr__(self):
         return self.__str__()
 
-# 注意 Operator 里计算的都是 Tensor 内部的数据
 class Operator(object):
     def __init__(self):
         super(Operator, self).__init__()
