@@ -14,6 +14,21 @@ What's included?
 ## Quick start
 
 ```sh
+# Download MNIST dataset
+wget http://yann.lecun.com/exdb/mnist/train-images-idx3-ubyte.gz
+wget http://yann.lecun.com/exdb/mnist/train-labels-idx1-ubyte.gz
+wget http://yann.lecun.com/exdb/mnist/t10k-images-idx3-ubyte.gz
+wget http://yann.lecun.com/exdb/mnist/t10k-labels-idx1-ubyte.gz
+
+# move dataset into data directory
+mkdir -p data
+mv *.gz data
+
+# install deps
+pip install numpy
+pip install python-mnist
+
+# run lenet
 python lenet.py
 ```
 
