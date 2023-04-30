@@ -415,6 +415,7 @@ class OpConv2d(Operator):
         # weight is a 4d matrix (o_c, c, h, w), where o_c is output channel
         # out is (n, o_c, h, w)
         x_padded = _pad(x, padding)
+
         i_n, i_c, i_h, i_w = x_padded.shape
         s_h, s_w = stride
         wo_c, wi_c, w_h, w_w = weight.shape
@@ -424,14 +425,10 @@ class OpConv2d(Operator):
         o_h = (i_h - w_h) // s_h + 1
         o_w = (i_w - w_w) // s_w + 1
 
-        out = np.zeros((o_n, o_c, o_h, o_w), dtype=weight.dtype)
-        for c in range(o_c):
-            for h in range(o_h):
-                for w in range(o_w):
-                    sel = x_padded[:, :, h*s_h:h*s_h+w_h, w*s_w:w*s_w+w_w]
-                    mul = sel * weight[c, :, :, :]
-                    out[:, c, h, w] = np.sum(mul, axis=(1, 2, 3)) # sum over c
-        return out
+        view_shape = (i_n, i_c, o_h, o_w, w_h, w_w)
+        view_strides = np.array([(i_c*i_h*i_w), (i_h*i_w) , s_h*i_w, s_w, i_w, 1]) * x_padded.itemsize
+        submatrix = np.lib.stride_tricks.as_strided(x_padded, view_shape, view_strides)
+        return np.einsum('ncHWhw,Cchw->nCHW', submatrix, weight, optimize=True)
 
     @staticmethod
     def _conv2d_backward_y(x: NDArray, y: NDArray, stride=(1,1), padding=(0,0)):
@@ -448,14 +445,10 @@ class OpConv2d(Operator):
         o_h = (i_h - y_h) // s_h + 1
         o_w = (i_w - y_w) // s_w + 1
 
-        out = np.zeros((o_n, o_c, o_h, o_w), dtype=y.dtype)
-        for c in range(o_n):
-            for h in range(o_h):
-                for w in range(o_w):
-                    sel = x_padded[:, :, h*s_h:h*s_h+y_h, w*s_w:w*s_w+y_w]
-                    mul = sel * y[:, c:c+1, :, :]
-                    out[c, :, h, w] = np.sum(mul, axis=(0, 2, 3)) # sum over c
-        return out
+        view_shape = (i_n, i_c, o_h, o_w, y_h, y_w)
+        view_strides = np.array([(i_c*i_h*i_w), (i_h*i_w) , s_h*i_w, s_w, i_w, 1]) * x_padded.itemsize
+        submatrix = np.lib.stride_tricks.as_strided(x_padded, view_shape, view_strides)
+        return np.einsum('ncHWhw,nChw->CcHW', submatrix, y, optimize=True)
 
     @staticmethod
     def _conv2d_backward_w(y: NDArray, weight: NDArray, stride=(1,1), padding=(0,0)):
@@ -472,14 +465,10 @@ class OpConv2d(Operator):
         o_h = (i_h - w_h) // s_h + 1
         o_w = (i_w - w_w) // s_w + 1
 
-        out = np.zeros((o_n, o_c, o_h, o_w), dtype=weight.dtype)
-        for c in range(o_c):
-            for h in range(o_h):
-                for w in range(o_w):
-                    sel = y_padded[:, :, h*s_h:h*s_h+w_h, w*s_w:w*s_w+w_w]
-                    mul = sel * weight[:, c, :, :]
-                    out[:, c, h, w] = np.sum(mul, axis=(1, 2, 3)) # sum over c
-        return out
+        view_shape = (i_n, i_c, o_h, o_w, w_h, w_w)
+        view_strides = np.array([(i_c*i_h*i_w), (i_h*i_w) , s_h*i_w, s_w, i_w, 1]) * y_padded.itemsize
+        submatrix = np.lib.stride_tricks.as_strided(y_padded, view_shape, view_strides)
+        return np.einsum('ncHWhw,cChw->nCHW', submatrix, weight, optimize=True)
 
     @timeit('OpConv2d-forward')
     def forward(self, x: NDArray, weight: NDArray):
@@ -634,17 +623,17 @@ class OpAvgPool2d(Operator):
         s_h, s_w = self.stride
         k_h, k_w = self.kernel_size
 
+        weight = np.ones((k_h, k_w))
+
         o_n = x_n
         o_c = x_c
         o_h = (x_h - k_h) // s_h + 1
         o_w = (x_w - k_w) // s_w + 1
 
-        out = np.zeros((o_n, o_c, o_h, o_w), dtype=x.dtype)
-        for h in range(o_h):
-            for w in range(o_w):
-                sel = x_padded[:, :, h*s_h:h*s_h+k_h, w*s_w:w*s_w+k_w]
-                out[:, :, h, w] = np.average(sel, axis=(2, 3)) # average hxw
-        return out
+        view_shape = (x_n, x_c, o_h, o_w, k_h, k_w)
+        view_strides = np.array([(x_c*x_h*x_w), (x_h*x_w) , s_h*x_w, s_w, x_w, 1]) * x_padded.itemsize
+        submatrix = np.lib.stride_tricks.as_strided(x_padded, view_shape, view_strides)
+        return np.einsum('ncHWhw,hw->ncHW', submatrix, weight, optimize=True) / (k_h*k_w)
 
     @timeit('OpAvgPool2d-backward')
     def backward(self, grad: NDArray):
@@ -654,6 +643,9 @@ class OpAvgPool2d(Operator):
         s_h, s_w = self.stride
         p_h, p_w = self.padding
 
+        weight = np.ones((k_h, k_w))
+
+        # construct y
         if self.stride == (1,1):
             y_expanded = grad
         else:
@@ -661,19 +653,17 @@ class OpAvgPool2d(Operator):
             h = x_h - k_h + 1
             w = x_w - k_w + 1
             y_expanded = np.zeros((y_n, y_c, h, w))
-            for h in range(y_h):
-                for w in range(y_w):
-                    y_expanded[:, :, h*s_h, w*s_w] = grad[:,:,h, w]
-
+            y_expanded[:, :, ::s_h, ::s_w] = grad[:,:,:, :]
         y_padded = _pad(y_expanded, (k_h-1, k_w-1))
+        yp_n, yp_c, yp_h, yp_w = y_padded.shape
 
         o_h = x_h - p_h
         o_w = x_w - p_w
-        out = np.zeros((x_n, x_c, o_h, o_w), dtype=y_padded.dtype)
-        for h in range(o_h):
-            for w in range(o_w):
-                sel = y_padded[:, :, h:h+k_h, w:w+k_w]
-                out[:, :, h, w] = np.sum(sel, axis=(2, 3))/4
+
+        view_shape = (yp_n, yp_c, o_h, o_w, k_h, k_w)
+        view_strides = np.array([(yp_c*yp_h*yp_w), (yp_h*yp_w) , yp_w, 1, yp_w, 1]) * y_padded.itemsize
+        submatrix = np.lib.stride_tricks.as_strided(y_padded, view_shape, view_strides)
+        out = np.einsum('ncHWhw,hw->ncHW', submatrix, weight, optimize=True) / (k_h*k_w)
 
         # remove padding
         if self.padding != (0,0):
