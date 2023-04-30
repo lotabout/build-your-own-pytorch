@@ -32,9 +32,6 @@ pip install python-mnist
 python lenet.py
 ```
 
-Note that current implementation is slow. And main bottleneck is the naive
-implementation of `Conv2d` operator.
-
 ## Some thoughts
 
 - autograd is relatively easy
@@ -43,28 +40,28 @@ implementation of `Conv2d` operator.
 ## Benchmark of ops?
 
 ```
-OpConv2d-backward        : avg: 0.2599260330, counts: 40
-OpConv2d-forward         : avg: 0.1358403578, counts: 41
-OpAvgPool2d-backward     : avg: 0.0219547331, counts: 40
-OpAvgPool2d-forward      : avg: 0.0060435712, counts: 40
-OpSigmoid-forward        : avg: 0.0020532936, counts: 80
-OpSigmoid-backward       : avg: 0.0013529807, counts: 80
-OpLinear-backward        : avg: 0.0003633142, counts: 60
-OpCrossEntropy-forward   : avg: 0.0003455400, counts: 20
-OpCrossEntropy-backward  : avg: 0.0002197146, counts: 20
-OpLinear-forward         : avg: 0.0002145807, counts: 60
-OpEWiseDiv-backward      : avg: 0.0000467539, counts: 20
-OpFlatten-forward        : avg: 0.0000318766, counts: 20
-OpSum-backward           : avg: 0.0000212908, counts: 40
-OpSum-forward            : avg: 0.0000176311, counts: 40
-OpExp-backward           : avg: 0.0000113964, counts: 20
-OpLog-forward            : avg: 0.0000101089, counts: 20
-OpEWiseDiv-forward       : avg: 0.0000095367, counts: 20
-OpExp-forward            : avg: 0.0000094056, counts: 20
-OpEWiseMul-backward      : avg: 0.0000084162, counts: 20
-OpEWiseMul-forward       : avg: 0.0000053644, counts: 20
-OpLog-backward           : avg: 0.0000038862, counts: 20
-OpFlatten-backward       : avg: 0.0000031948, counts: 20
-OpMulScalar-forward      : avg: 0.0000014186, counts: 20
-OpMulScalar-backward     : avg: 0.0000013828, counts: 20
+OpConv2d-backward        : avg: 0.0953309418, counts: 81
+OpConv2d-forward         : avg: 0.0331299218, counts: 82
+OpAvgPool2d-backward     : avg: 0.0114380703, counts: 82
+OpSigmoid-forward        : avg: 0.0023136401, counts: 164
+OpAvgPool2d-forward      : avg: 0.0016568696, counts: 82
+OpSigmoid-backward       : avg: 0.0008361994, counts: 164
+OpLinear-backward        : avg: 0.0003190138, counts: 123
+OpCrossEntropy-backward  : avg: 0.0002894227, counts: 41
+OpCrossEntropy-forward   : avg: 0.0001843266, counts: 41
+OpLinear-forward         : avg: 0.0001273892, counts: 123
+OpEWiseDiv-backward      : avg: 0.0000668037, counts: 41
+OpFlatten-forward        : avg: 0.0000345940, counts: 41
+OpSum-backward           : avg: 0.0000244466, counts: 82
+OpSum-forward            : avg: 0.0000213559, counts: 82
+OpEWiseMul-backward      : avg: 0.0000208762, counts: 41
+OpExp-backward           : avg: 0.0000152937, counts: 41
+OpLog-forward            : avg: 0.0000133398, counts: 41
+OpExp-forward            : avg: 0.0000130607, counts: 41
+OpEWiseDiv-forward       : avg: 0.0000130432, counts: 41
+OpEWiseMul-forward       : avg: 0.0000070130, counts: 41
+OpLog-backward           : avg: 0.0000053208, counts: 41
+OpFlatten-backward       : avg: 0.0000038147, counts: 41
+OpMulScalar-forward      : avg: 0.0000034832, counts: 41
+OpMulScalar-backward     : avg: 0.0000019829, counts: 41
 ```

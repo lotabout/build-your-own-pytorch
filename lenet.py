@@ -36,10 +36,7 @@ def gradient_descent(x, grad):
     return x - learning_rate * grad
 
 mini_batch = 128
-epochs = 3
-
-# Note that it's slow, every mini_batch takes about 1 sec
-# currenty OpConv2d is the bottle netck
+epochs = 5
 
 for epoch in range(epochs):
     print(f'epoch: {epoch}, {datetime.now()}')
@@ -60,6 +57,8 @@ def predict(image):
     print(f'prediction: {result}')
     return result
 
+test_images, test_labels = mndata.load_testing()
+
 print('Examples of prediction')
 for i in range(10):
     choice = random.randrange(0, 10000)
@@ -67,7 +66,6 @@ for i in range(10):
 
 print('Validating...(takes around 2 minutes)')
 # validate on test set
-test_images, test_labels = mndata.load_testing()
 x = Tensor(np.array(test_images).reshape(10000, 1, 28, 28) / 255.0)
 y_pred_probabilities = lenet(x)
 predictions = np.argmax(y_pred_probabilities.ndarray, axis=1)
