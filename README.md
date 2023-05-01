@@ -23,6 +23,7 @@ wget http://yann.lecun.com/exdb/mnist/t10k-labels-idx1-ubyte.gz
 # move dataset into data directory
 mkdir -p data
 mv *.gz data
+gunzip data/*.gz
 
 # install deps
 pip install numpy
